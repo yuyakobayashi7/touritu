@@ -1,0 +1,117 @@
+nclude "mbed.h"
+#include "Motor.h"
+#include "QEI.h"
+
+BusOut led(LED1, LED2, LED3, LED4);	//Šî”ÂLED—pIOÝ’è
+AnalogIn pen(AD7);									//ƒ|ƒeƒ“ƒVƒ‡ƒ[ƒ^—pIOÝ’è
+
+Ticker pen_control;								//‘äŽÔ‚Ì‘¬“x§Œä—pƒ^ƒCƒ}[Š„‚èž‚Ý
+
+Serial pc(USBTX, USBRX);						//ƒfƒoƒbƒO—pƒVƒŠƒAƒ‹’ÊM
+
+//ƒ‚[ƒ^§Œä—pƒIƒuƒWƒFƒNƒg
+Motor motor_left(MOTOR1_IN1, MOTOR1_IN2, MOTOR1_PWM);		//¶ƒ‚[ƒ^
+Motor motor_right(MOTOR2_IN1, MOTOR2_IN2, MOTOR2_PWM);	//‰Eƒ‚[ƒ^
+
+//***************@‘äŽÔ‚Ì‘¬“x§Œä@‚±‚±‚©‚ç@***************
+
+int pen_val;												//UŽq‚É‚Â‚¢‚Ä‚¢‚éƒ|ƒeƒ“ƒVƒ‡ƒ[ƒ^‚ÌAD’lŠi”[—p
+int goal_pen_val = 740;							//UŽq‚Ì–Ú•W’l(AD’l)
+int adv;
+double e,ed,ei,e0,theta,dtheta,theta0;
+double x,dx,x0;
+double speed, last_speed,duty_ratio;					//ŽÔ‘Ì‚Ì‘¬“x@C@‘O‰ñ‚ÌŽÔ‘Ì‚Ì‘¬“x
+double pen_kp = 6.0,pen_ki = 2.0,pen_kd = 2.0;		//ƒQƒCƒ“Ý’è—p•Ïsu
+
+double TARGET_THETA=0.0, T=0.5, PULSE_TO_METER =0.0005;	
+double ADV_TO_RAD= -0.0037;//-0.0056808;		
+double K1=-0.6,K2=-0.9,K3=-3.0,K4=-1.4;
+//double K1=-0.0,K2=-0.0,K3=-0.0,K4=-0.0;
+				
+
+int pen_diff;										//UŽq‚Ì–Ú•W’l‚Æƒ|ƒeƒ“ƒVƒ‡ƒ[ƒ^‚ÌAD’l‚Ì·•ªŠi”[—p
+
+void pen_control_handler(){
+	pen_val = pen.read_u16()>>6;					//ADC‚ð’Ê‚µ‚Äƒ|ƒeƒ“ƒVƒ‡ƒ[ƒ^‚ÌAD’l‚ðŽæ“¾
+	//“‹Ú‚³‚ê‚Ä‚¢‚éLPC1114‚ÌADC‚Í10bit‚Ì‚½‚ß6bit‰E‚ÉƒVƒtƒg
+	
+	//pen_diff = (double)(goal_pen_val - pen_val);		////////UŽq‚Ì–Ú•W’l‚Æƒ|ƒeƒ“ƒVƒ‡ƒ[ƒ^‚ÌAD’l‚Ì·•ª‚ðŒvŽZ‚µ‚ÄŠi”[	
+	
+	//////////////////////////////////////////////////
+	 adv = pen_val;    
+
+	
+theta = (float)adv * ADV_TO_RAD + 2.747;	// digital	//2.897
+		e = TARGET_THETA - theta;
+	 ed = (e - e0) / T;
+	 ei += e * T;
+	 e0 = e;
+	
+	if(ei < -100) ei = -100; 
+	if(ei > 100) ei = 100;
+
+
+//  Calculate PID control	//
+	duty_ratio = (float)((e * pen_kp + ei * pen_ki + ed * pen_kd)*100);
+
+  motor_left = duty_ratio;
+	motor_right = duty_ratio;
+
+//  Introduce x, dx, theta, dtheta	//
+	x = (float)(motor_left + motor_right) / 2 * PULSE_TO_METER; //65
+	dx = (x - x0) / T;				//
+	x0 = x;						//
+	theta = e;					//
+	dtheta = ed;					//
+	theta0 = theta;					//
+
+//  Calculate state feedback control	//	 
+	duty_ratio = -(int)((x*K1+dx*K2+theta*K3+dtheta*K4)*100);
+	
+
+
+	//‘¬“xŽw—ß’l‚Ì“ª‘Å‚¿ˆ—	//
+	if(duty_ratio > 100) duty_ratio = 100;
+	else if(duty_ratio < -100) duty_ratio = -100;
+	
+
+	// ‘¬“xŽw—ß’l‚É‚æ‚Á‚Ä”­s‚·‚éLED‚ð•Ï‚¦‚é ****
+		if(duty_ratio > 80 ){
+			led = 8;
+		}else if(duty_ratio <= 80 && duty_ratio >= 0){
+			led = 4;
+		}else if(duty_ratio < 0 && duty_ratio >= -80){
+			led = 2;
+		}else if(duty_ratio < -80){
+			led = 1;
+		}
+	// ‘¬“xŽw—ß’l‚É‚æ‚Á‚Ä”­s‚·‚éLED‚ð•Ï‚¦‚é@‚±‚±‚Ü‚Å ****
+	
+	//last_speed = duty_ratio;										//‘O‰ñ‚Ì‘¬“xŽw—ß‚ðŠi”[
+	
+	//ŒvŽZŒ‹‰Ê‚ðƒ‚[ƒ^‚Ì‘¬“xŽw—ß‚É”½‰f
+	motor_left = duty_ratio;
+	motor_right = duty_ratio;
+
+}
+		//@‘äŽÔ‚Ì‘¬“x§Œä@‚±‚±‚Ü‚Å@***************
+
+		//@mainŠÖ”@‚±‚±‚©‚ç@***************
+int main() {
+
+	//ƒ‚[ƒ^‚ÌÅ‘å‘¬“x‚ðÝ’è
+	motor_left.setMaxRatio(0.4);
+	motor_right.setMaxRatio(0.3);
+	
+	pen_control.attach(&pen_control_handler, 0.001);		//‘äŽÔ‚Ì‘¬“x§Œä—p‚Ìƒ^ƒCƒ}[ŠÖ”‚ðÝ’è
+	
+	led = 1;		//LED‚Ì’l‚ðÝ’è@“®ìŠm”F—p
+	
+	wait(1.0);		//‚È‚ñ‚Æ‚È‚­1•b‘Ò‚Â
+	
+	while(1) {		//–³ŒÀƒ‹[ƒv
+		printf("pen:%d speed:%2.2f b:%f  \r\n", pen_val ,duty_ratio, dx);
+		wait(0.008);
+	}
+}
+
